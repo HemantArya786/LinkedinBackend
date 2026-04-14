@@ -1,0 +1,112 @@
+version: "3.9"
+
+# ─── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  app_net:
+    driver: bridge
+
+# ─── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  mongo_data:
+  redis_data:
+
+# ─── Services ──────────────────────────────────────────────────────────────────
+services:
+
+  # ── API (3 replicas for horizontal scaling demo) ────────────────────────────
+  api:
+    build:
+      context: .
+      target: runtime
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── Nginx reverse proxy / load balancer ────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - api
+    networks:
+      - app_net
+    restart: always
+
+  # ── MongoDB (single node; use replica set for production) ───────────────────
+  mongo:
+    image: mongo:6
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-secret}
+      MONGO_INITDB_DATABASE: linkedin_clone
+    volumes:
+      - mongo_data:/data/db
+      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/init.js:ro
+    networks:
+      - app_net
+    restart: always
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-redispass}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_net
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD:-redispass}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── BullMQ Dashboard (optional – dev only) ───────────────────────────────────
+  bull-board:
+    image: deadly0/bull-board
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redispass}
+    ports:
+      - "3001:3000"
+    depends_on:
+      - redis
+    networks:
+      - app_net
+    profiles:
+      - dev   # only starts with: docker compose --profile dev up

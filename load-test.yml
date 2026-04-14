@@ -1,0 +1,110 @@
+config:
+  target: "http://localhost:5000"
+  phases:
+    # ── Warm-up ───────────────────────────────────────────────────────────────
+    - name: "Warm-up"
+      duration: 30
+      arrivalRate: 5
+
+    # ── Ramp-up ───────────────────────────────────────────────────────────────
+    - name: "Ramp-up"
+      duration: 60
+      arrivalRate: 5
+      rampTo: 50
+
+    # ── Sustained load ────────────────────────────────────────────────────────
+    - name: "Sustained load"
+      duration: 120
+      arrivalRate: 50
+
+    # ── Spike ─────────────────────────────────────────────────────────────────
+    - name: "Spike"
+      duration: 30
+      arrivalRate: 200
+
+  payload:
+    path: "./load-test-users.csv"   # columns: email,password,token
+    fields:
+      - email
+      - password
+      - token
+
+  plugins:
+    expect: {}
+
+  defaults:
+    headers:
+      Content-Type: "application/json"
+
+scenarios:
+  # ── Auth flow ─────────────────────────────────────────────────────────────
+  - name: "Login and read feed"
+    weight: 40
+    flow:
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.data.accessToken"
+              as: token
+          expect:
+            - statusCode: 200
+
+      - get:
+          url: "/api/v1/posts/feed?limit=20"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+  # ── Read-heavy: profile + search ──────────────────────────────────────────
+  - name: "Profile + search"
+    weight: 30
+    flow:
+      - get:
+          url: "/api/v1/users/search?query=engineer&limit=10"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+      - get:
+          url: "/api/v1/notifications"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+  # ── Write-heavy: create post ──────────────────────────────────────────────
+  - name: "Create post"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.data.accessToken"
+              as: token
+
+      - post:
+          url: "/api/v1/posts"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          json:
+            content: "Load test post {{ $randomString() }}"
+            visibility: "public"
+          expect:
+            - statusCode: 201
+
+  # ── Health check ──────────────────────────────────────────────────────────
+  - name: "Health check"
+    weight: 10
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
