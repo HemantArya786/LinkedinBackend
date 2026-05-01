@@ -23,16 +23,18 @@
     "docker:logs": "docker compose logs -f api"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1040.0",
     "@socket.io/redis-adapter": "^8.2.1",
+    "axios": "^1.15.2",
     "bcryptjs": "^2.4.3",
-    "bullmq": "^4.15.0",
-    "cloudinary": "^1.41.3",
+    "bullmq": "^5.76.4",
+    "cloudinary": "^2.10.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "google-auth-library": "^9.2.0",
-    "googleapis": "^126.0.1",
+    "googleapis": "^171.4.0",
     "helmet": "^7.1.0",
     "ioredis": "^5.3.2",
     "joi": "^17.11.0",
@@ -40,9 +42,10 @@
     "mongoose": "^8.0.3",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.7",
+    "nodemailer": "^8.0.7",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
+    "posthog-node": "^5.32.0",
     "socket.io": "^4.6.2",
     "winston": "^3.11.0",
     "winston-daily-rotate-file": "^4.7.1"
@@ -57,8 +60,12 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/__tests__/**/*.test.js"],
-    "setupFilesAfterFramework": ["./__tests__/setup.js"],
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "setupFilesAfterFramework": [
+      "./__tests__/setup.js"
+    ],
     "testTimeout": 30000,
     "collectCoverageFrom": [
       "src/**/*.js",
@@ -67,7 +74,11 @@
     ]
   },
   "nodemonConfig": {
-    "ignore": ["__tests__", "logs", "node_modules"],
+    "ignore": [
+      "__tests__",
+      "logs",
+      "node_modules"
+    ],
     "delay": 500
   },
   "engines": {

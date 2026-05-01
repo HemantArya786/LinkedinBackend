@@ -4,6 +4,7 @@ const postRepository = require('../repositories/post.repository');
 const feedService = require('./feed.service');
 const { getFeedAggregation } = require('../repositories/aggregations');
 const { cache } = require('../loaders/redis');
+const { captureEvent } = require('../loaders/posthog');
 const { AppError } = require('../utils/appError');
 const logger = require('../utils/logger');
 
@@ -12,6 +13,13 @@ class PostService {
     // 1. Persist to DB
     const raw = await postRepository.create({ author: authorId, ...data });
     const post = await postRepository.findById(raw._id);
+
+    // Track post creation
+    captureEvent(authorId.toString(), 'post_created', {
+      post_id: raw._id.toString(),
+      has_image: !!data.media?.length,
+      has_video: data.media?.some(m => m.type === 'video'),
+    });
 
     // 2. Fan-out to followers' Redis feed lists (fire-and-forget)
     feedService.fanOutPost(authorId, raw._id).catch((err) => {
@@ -38,6 +46,11 @@ class PostService {
     }
 
     await postRepository.deleteById(postId);
+    
+    // Track post deletion
+    captureEvent(requesterId.toString(), 'post_deleted', {
+      post_id: postId.toString(),
+    });
 
     // Remove from Redis feed lists + bust simple cache key
     feedService.removePostFromFeeds(requesterId, postId).catch(() => {});

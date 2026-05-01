@@ -5,7 +5,7 @@ const authRepository = require('../repositories/auth.repository');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { AppError } = require('../utils/appError');
 const { cache } = require('../loaders/redis');
-const config = require('../config');
+const { captureEvent, identifyUser } = require('../loaders/posthog');
 
 class AuthService {
   /**
@@ -16,6 +16,18 @@ class AuthService {
     if (existing) throw new AppError('Email already registered', 409);
 
     const user = await authRepository.createUser(data);
+    
+    // Track registration
+    captureEvent(user._id.toString(), 'user_registered', {
+      email: data.email,
+      method: 'email_password',
+    });
+    identifyUser(user._id.toString(), {
+      email: data.email,
+      name: data.name,
+      signed_up_at: new Date().toISOString(),
+    });
+    
     return this._issueTokens(user);
   }
 
@@ -30,6 +42,11 @@ class AuthService {
     // 2. Verify password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) throw new AppError('Invalid email or password', 401);
+
+    // Track login
+    captureEvent(user._id.toString(), 'user_logged_in', {
+      method: 'email_password',
+    });
 
     return this._issueTokens(user);
   }
@@ -48,6 +65,9 @@ class AuthService {
         user = await require('../models/User')
           .findByIdAndUpdate(user._id, { googleId: profile.googleId }, { new: true })
           .lean();
+        captureEvent(user._id.toString(), 'google_linked', {
+          email: profile.email,
+        });
       } else {
         user = await authRepository.createUser({
           name: profile.name,
@@ -55,7 +75,21 @@ class AuthService {
           googleId: profile.googleId,
           profileImage: profile.picture ? { url: profile.picture } : undefined,
         });
+        captureEvent(user._id.toString(), 'user_registered', {
+          email: profile.email,
+          method: 'google_oauth',
+        });
+        identifyUser(user._id.toString(), {
+          email: profile.email,
+          name: profile.name,
+          signed_up_at: new Date().toISOString(),
+        });
       }
+    } else {
+      // Existing user logging in via Google
+      captureEvent(user._id.toString(), 'user_logged_in', {
+        method: 'google_oauth',
+      });
     }
 
     return this._issueTokens(user);
@@ -93,6 +127,9 @@ class AuthService {
       await authRepository.removeRefreshToken(userId, refreshToken);
     }
     await cache.del(`user:profile:${userId}`);
+    
+    // Track logout
+    captureEvent(userId.toString(), 'user_logged_out');
   }
 
   // ── Private ────────────────────────────────────────────────────────────────

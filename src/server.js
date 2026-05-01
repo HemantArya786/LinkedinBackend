@@ -6,8 +6,9 @@ const http = require('http');
 const app = require('./app');
 const config = require('./config');
 const logger = require('./utils/logger');
-const { connectDB } = require('./loaders/db');
-const { getRedisClient } = require('./loaders/redis');
+const { connectDB, disconnectDB } = require('./loaders/db');
+const { initRedis, getRedisClient } = require('./loaders/redis');
+const { initPostHog, shutdownPostHog } = require('./loaders/posthog');
 const { initSocket } = require('./sockets/index');
 const { setIO } = require('./jobs/index');
 
@@ -19,9 +20,9 @@ function gracefulShutdown(signal) {
   logger.info(`Received ${signal} – shutting down gracefully`);
   httpServer.close(async () => {
     try {
-      const mongoose = require('mongoose');
-      await mongoose.connection.close();
+      await disconnectDB();
       await getRedisClient().quit();
+      await shutdownPostHog();
       logger.info('All connections closed. Exiting.');
       process.exit(0);
     } catch (err) {
@@ -57,21 +58,23 @@ process.on('uncaughtException', (err) => {
     // 1. Connect MongoDB
     await connectDB();
 
-    // 2. Ping Redis
-    await getRedisClient().ping();
-    logger.info('✅  Redis ping OK');
+    // 2. Initialize Redis (or fallback to in-memory cache)
+    await initRedis();
 
-    // 3. Attach Socket.IO
+    // 3. Initialize PostHog analytics
+    initPostHog();
+
+    // 4. Attach Socket.IO
     const io = initSocket(httpServer);
 
-    // 4. Give BullMQ workers access to Socket.IO
+    // 5. Give BullMQ workers access to Socket.IO
     setIO(io);
 
-    // 5. Start scheduled cron jobs
+    // 6. Start scheduled cron jobs
     const { startCronJobs } = require('./jobs/cron');
     startCronJobs();
 
-    // 5. Start listening
+    // 7. Start listening
     httpServer.listen(config.port, () => {
       logger.info(`🚀  Server running on port ${config.port} [${config.env}]`);
       logger.info(`📡  API available at /api/${config.apiVersion}`);

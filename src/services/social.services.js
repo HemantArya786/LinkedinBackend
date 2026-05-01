@@ -3,6 +3,7 @@
 // ─── Comment Service ──────────────────────────────────────────────────────────
 const { Comment } = require('../models/index');
 const postRepository = require('../repositories/post.repository');
+const { captureEvent } = require('../loaders/posthog');
 const { AppError } = require('../utils/appError');
 
 class CommentService {
@@ -12,6 +13,12 @@ class CommentService {
 
     const comment = await Comment.create({ postId, userId, text, parentId: parentId || null });
     await postRepository.incrementCommentCount(postId, 1);
+
+    // Track comment creation
+    captureEvent(userId.toString(), 'comment_created', {
+      post_id: postId.toString(),
+      is_reply: !!parentId,
+    });
 
     return comment.populate('userId', 'name profileImage headline');
   }
@@ -55,6 +62,10 @@ class ReactionService {
         await Model.findByIdAndUpdate(targetId, {
           $inc: { [`reactionsCount.${type}`]: -1 },
         });
+        captureEvent(userId.toString(), 'reaction_removed', {
+          reaction_type: type,
+          target_type: targetType,
+        });
         return { action: 'removed', type };
       }
       // Different reaction → swap
@@ -64,6 +75,11 @@ class ReactionService {
       await Model.findByIdAndUpdate(targetId, {
         $inc: { [`reactionsCount.${oldType}`]: -1, [`reactionsCount.${type}`]: 1 },
       });
+      captureEvent(userId.toString(), 'reaction_changed', {
+        from_type: oldType,
+        to_type: type,
+        target_type: targetType,
+      });
       return { action: 'changed', type };
     }
 
@@ -71,6 +87,10 @@ class ReactionService {
     await Reaction.create({ userId, targetId, targetType, type });
     await Model.findByIdAndUpdate(targetId, {
       $inc: { [`reactionsCount.${type}`]: 1 },
+    });
+    captureEvent(userId.toString(), 'reaction_added', {
+      reaction_type: type,
+      target_type: targetType,
     });
     return { action: 'added', type };
   }
@@ -93,7 +113,14 @@ class ConnectionService {
     });
     if (existing) throw new AppError('Connection request already exists', 409);
 
-    return Connection.create({ senderId, receiverId });
+    const conn = await Connection.create({ senderId, receiverId });
+    
+    // Track connection request
+    captureEvent(senderId.toString(), 'connection_requested', {
+      receiver_id: receiverId.toString(),
+    });
+    
+    return conn;
   }
 
   async respond(connectionId, userId, action) {
@@ -110,7 +137,18 @@ class ConnectionService {
     if (action === 'accept') {
       await userRepository.incrementConnections(conn.senderId, 1);
       await userRepository.incrementConnections(conn.receiverId, 1);
+      
+      // Track connection accepted
+      captureEvent(userId.toString(), 'connection_accepted', {
+        sender_id: conn.senderId.toString(),
+      });
+    } else {
+      // Track connection rejected
+      captureEvent(userId.toString(), 'connection_rejected', {
+        sender_id: conn.senderId.toString(),
+      });
     }
+    
     return conn;
   }
 
@@ -184,6 +222,13 @@ class MessageService {
         updatedAt: new Date(),
       }),
     ]);
+    
+    // Track message sent
+    captureEvent(senderId.toString(), 'message_sent', {
+      message_type: type,
+      conversation_id: conversationId.toString(),
+    });
+    
     return msg.populate('senderId', 'name profileImage');
   }
 
